@@ -1,6 +1,6 @@
 const { Router } = require("express");
 const axios = require("axios");
-const { Op, Raza} = require('../db.js');
+const { Op, Raza, Temperamento} = require('../db.js');
 // Importar todos los routers;
 // Ejemplo: const authRouter = require('./auth.js');
 
@@ -15,36 +15,93 @@ async function getDogs(name) {
       `https://api.thedogapi.com/v1/breeds/search?q=${name}`
     );
 
-    dog = {
-      id: dog.data[0].id,
-      name: dog.data[0].name,
-      weight: dog.data[0].weight.metric,
-      height: dog.data[0].height.metric,
-      life_span: dog.data[0].life_span,
-      temperament: dog.data[0].temperament,
-    };
-    console.log(dog);
-    return dog;
+    dog = dog.data?.map((d) => {
+      if(d.weight.metric === 'NaN' || d.weight.metric.slice(0, 3) === 'NaN'  || d.weight.metric.length < 4){
+        return false;
+       }else{
+        return {
+          id: d.id,
+          name: d.name,
+          weight: d.weight.metric,
+          height: d.height.metric,
+          life_span: d.life_span,
+          temperament: d.temperament,
+          img: d.reference_image_id
+        };
+      }
+    });
+
+    dog = dog.filter((ele) => ele !== false)
+
+    let dogBd = await Raza.findAll({
+        where: {
+            name:{ [Op.substring]: name}
+        },
+        include:[{
+            model: Temperamento,
+            attributes: ['name']
+          }]
+    })
+
+    dogBd = dogBd?.map(d => {
+        return {
+            id: d.id,
+            name: d.name,
+            weight: d.weight,
+            height: d.height,
+            life_span: d.life_span,
+            temperament: d.Temperamentos.map(t => t.name).join(', ')
+        }
+    })
+
+    return dog.concat(dogBd);
+
   } else {
     let dogs = await axios.get(`https://api.thedogapi.com/v1/breeds`);
 
-    dogs = dogs.data.map((d) => {
-      return {
-        id: d.id,
-        name: d.name,
-        weight: d.weight.metric,
-        height: d.height.metric,
-        life_span: d.life_span,
-        temperament: d.temperament,
-      };
+    dogs = dogs.data?.map((d) => {
+      if(d.weight.metric === 'NaN' || d.weight.metric.slice(0, 3) === 'NaN'  || d.weight.metric.length < 4){
+       return false;
+      }else{
+        return {
+          id: d.id,
+          name: d.name,
+          weight: d.weight.metric,
+          height: d.height.metric,
+          life_span: d.life_span,
+          temperament: d.temperament,
+          img: d.reference_image_id,
+        };
+      }
     });
-    return dogs;
+
+
+    dogs = dogs.filter((ele) => ele !== false)
+    let dogsBd = await Raza.findAll({
+       include:[{
+        model: Temperamento,
+        attributes: ['name']
+      }]
+    })
+    
+    dogsBd = dogsBd?.map(d => {
+        return {
+            id: d.id,
+            name: d.name,
+            weight: d.weight,
+            height: d.height,
+            life_span: d.life_span,
+            temperament: d.Temperamentos.map(t => t.name).join(', ')
+        }
+    })
+   // console.log(dogsBd)
+    return dogs.concat(dogsBd);
   }
 }
 
 async function getDog(idRaza) {
   let dogs = await axios.get(`https://api.thedogapi.com/v1/breeds`);
-  dogs = dogs.data.filter((d) => d.id == idRaza).map((d) => {
+  dogs = dogs.data.filter((d) => d.id == Number(idRaza)).map((d) => {
       return {
         id: d.id,
         name: d.name,
@@ -52,9 +109,31 @@ async function getDog(idRaza) {
         height: d.height.metric,
         life_span: d.life_span,
         temperament: d.temperament,
+        img: d.image.id,
       };
     });
-  console.log(dogs);
+
+  if(dogs.length < 1){
+    
+    const dogbd = await Raza.findByPk(idRaza, {
+      include:[{
+       model: Temperamento,
+       attributes: ['name']
+     }]
+   })
+   console.log(dogbd.Temperamentos)
+
+    return [{
+      id: dogbd.id,
+      name: dogbd.name,
+      weight: dogbd.weight,
+      height: dogbd.height,
+      life_span: dogbd.life_span,
+      temperament: dogbd.Temperamentos.map(t => t.name).join(', ')
+      
+    }]
+  }
+  //console.log(dogs);
   return dogs;
 }
 
@@ -85,13 +164,14 @@ router.get("/:idRaza", async (req, res) => {
     const dog = await getDog(idRaza);
     res.status(201).json(dog);
   } catch (error) {
+    console.log(error)
     res.status(404).send("ERROR!");
   }
 });
 
 router.post('/', async (req, res) => {
-    const {name, weight, height, life_span, temperaments} = req.body;
-    if(!name || !weight || !height || !life_span || !temperaments) return res.status(404).send("Falta enviar datos obligatorios")
+    const {name, weight, height, life_span, temperament} = req.body;
+    if(!name || !weight || !height || !life_span || !temperament) return res.status(404).send("Falta enviar datos obligatorios")
 
     try {
         const raza = await Raza.create({  //req.body
@@ -101,12 +181,12 @@ router.post('/', async (req, res) => {
           life_span,
         });
 
-        if(temperaments.length > 1){
-            const promises = temperaments.map(a => raza.setTemperamentos(a))
+        if(temperament.length > 1){
+            const promises = temperament.map(a => raza.setTemperamentos(a))
             await Promise.all(promises)
             
-        }else if(temperaments.length === 1){
-            await raza.setTemperamentos(temperaments[0])
+        }else if(temperament.length === 1){
+            await raza.setTemperamentos(temperament[0])
         }
 
         res.status(201).send('Raza creada y vinculada')
